@@ -1,5 +1,9 @@
 # GTA VI launch-day Twitch viewers: comparable-launch forecast
 
+[![make.fun](https://make.fun/badge/gta6-twitch-ccu-forecast-01.svg)](https://make.fun/bounty/gta6-twitch-ccu-forecast-01)
+[![rank](https://make.fun/badge/gta6-twitch-ccu-forecast-01/aryafrb12/gta6-twitch-viewers-forecast/rank.svg)](https://make.fun/bounty/gta6-twitch-ccu-forecast-01)
+[![reward](https://make.fun/badge/gta6-twitch-ccu-forecast-01/aryafrb12/gta6-twitch-viewers-forecast/reward.svg)](https://make.fun/bounty/gta6-twitch-ccu-forecast-01)
+
 Entry for make.fun `gta6-twitch-ccu-forecast-01`. `python3 main.py` reads every `*.in` in `$MAKEFUN_INPUT_DIR`
 (default `/input`) and writes `<id>.out` (five quantiles for each of hours 2–24) to `$MAKEFUN_OUTPUT_DIR` (default
 `/output`). It uses only the standard library, is deterministic, and runs in about 0.2 s.
