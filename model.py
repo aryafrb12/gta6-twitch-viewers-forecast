@@ -22,6 +22,8 @@ PARAMS = {
     "small_h1": 5000,       # hour 1 below this: category barely launched at 00 UTC
     "small_w": 0.15,
     "size_bw": 1.0,         # kernel bandwidth on log(h1) (0 = off)
+    "size_cap_rank": 3,     # target size capped at the k-th largest comparable hour 1 (0 = no cap)
+    "neff_min": 4.0,        # below this effective sample size the spread widens (sqrt(neff_min/neff))
     "ev_bw": 0.0,           # kernel bandwidth on log(evening-before / h1) (0 = off)
     "ev_slope": 0.5,        # shrunk regression slope of y_h on log(ev) (0 = off)
     "loc": "blend",         # "wmean" | "wmedian" | "blend"
@@ -137,6 +139,11 @@ def wquantile(pairs, q):
 def forecast(target, pool, p=PARAMS):
     """target: {"h1", "ev"}; pool: comparable records. Returns {h: [5 quantiles of log ratio]}."""
     lh1 = math.log(max(1.0, target["h1"]))
+    k = int(p.get("size_cap_rank", 0))
+    if k > 0:
+        tops = sorted((r["h1"] for r in pool if base_weight(r, p) > 0), reverse=True)
+        if len(tops) >= k:
+            lh1 = min(lh1, math.log(tops[k - 1]))
     lev = math.log(target["ev"]) if target.get("ev") else None
     ws = []
     for r in pool:
@@ -144,7 +151,8 @@ def forecast(target, pool, p=PARAMS):
         if w <= 0:
             continue
         if p["size_bw"] > 0:
-            w *= math.exp(-0.5 * ((math.log(r["h1"]) - lh1) / p["size_bw"]) ** 2)
+            k = math.exp(-0.5 * ((math.log(r["h1"]) - lh1) / p["size_bw"]) ** 2)
+            w *= k
         if p["ev_bw"] > 0 and lev is not None and r["ev"]:
             w *= math.exp(-0.5 * ((math.log(r["ev"]) - lev) / p["ev_bw"]) ** 2)
         ws.append((r, w))
@@ -179,6 +187,8 @@ def forecast(target, pool, p=PARAMS):
         var = sum(w * (v - loc) ** 2 for v, w, _ in pts) / sw
         neff = sw ** 2 / sum(w * w for _, w, _ in pts)
         sd = math.sqrt(var) * p["sd_inflate"] * math.sqrt(1 + 1 / max(neff, 1))
+        if p["neff_min"] > neff:
+            sd *= math.sqrt(p["neff_min"] / neff)
         floor = p["sd_floor"] + p["sd_floor_growth"] * math.sqrt(h - 1)
         sd = math.sqrt(sd * sd + floor * floor)
         if target["h1"] > max_h1:
