@@ -28,11 +28,12 @@ PARAMS = {
     "ev_bw": 0.0,           # kernel bandwidth on log(evening-before / h1) (0 = off)
     "ev_slope": 0.5,        # shrunk regression slope of y_h on log(ev) (0 = off)
     "loc": "blend",         # "wmean" | "wmedian" | "blend"
-    "sd_inflate": 0.9,
+    "sd_inflate": 0.8,
     "sd_floor": 0.10,
     "sd_floor_growth": 0.02,  # extra floor per sqrt(h-1)
-    "tail_mult": 1.15,        # extra multiplier on the 5%/95% (fat tails)
+    "tail_mult": 1.3,         # extra multiplier on the 5%/95% (fat tails)
     "extrap_sd": 0.15,         # extra sd when the target's hour 1 is above every comparable's
+    "skew": 0.0,            # 0 symmetric spread, 1 fully separate lower/upper semi-deviations
     "loc_shift": 0.0,         # constant log shift of the median (judgement), 0 = none
 }
 
@@ -183,6 +184,9 @@ def forecast(target, pool, p=PARAMS):
         if len(tops) >= k:
             lh1 = min(lh1, math.log(tops[k - 1]))
     lev = math.log(target["ev"]) if target.get("ev") else None
+    pool_evs = [math.log(r["ev"]) for r in pool if r.get("ev")]
+    if lev is not None and pool_evs:
+        lev = max(min(pool_evs), min(max(pool_evs), lev))  # never extrapolate the regression
     ws = []
     for r in pool:
         w = base_weight(r, p) * wave(r)
@@ -232,9 +236,20 @@ def forecast(target, pool, p=PARAMS):
         if target["h1"] > max_h1:
             sd = math.sqrt(sd * sd + p["extrap_sd"] ** 2)
         loc += p["loc_shift"]
+        sd_lo = sd_hi = sd
+        if p["skew"] > 0:
+            lo = sum(w * (v - loc) ** 2 for v, w, _ in pts if v < loc)
+            hi = sum(w * (v - loc) ** 2 for v, w, _ in pts if v >= loc)
+            if lo + hi > 0:
+                # split the variance by side, keeping the total; floor each side at half of the symmetric sd
+                f_lo = math.sqrt(2 * lo / (lo + hi))
+                f_hi = math.sqrt(2 * hi / (lo + hi))
+                a = p["skew"]
+                sd_lo = sd * max(0.5, (1 - a) + a * f_lo)
+                sd_hi = sd * max(0.5, (1 - a) + a * f_hi)
         qs = []
         for z in Z:
             m = p["tail_mult"] if abs(z) > 1 else 1.0
-            qs.append(loc + z * sd * m)
+            qs.append(loc + z * (sd_lo if z < 0 else sd_hi) * m)
         out[h] = qs
     return out
