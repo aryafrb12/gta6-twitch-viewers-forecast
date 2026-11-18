@@ -22,8 +22,9 @@ PARAMS = {
     "small_h1": 5000,       # hour 1 below this: category barely launched at 00 UTC
     "small_w": 0.15,
     "size_bw": 1.0,         # kernel bandwidth on log(h1) (0 = off)
-    "size_cap_rank": 3,     # target size capped at the k-th largest comparable hour 1 (0 = no cap)
+    "size_cap_rank": 2,     # target size capped at the k-th largest comparable hour 1 (0 = no cap)
     "neff_min": 4.0,        # below this effective sample size the spread widens (sqrt(neff_min/neff))
+    "wave_w": 0.35,         # weight multiplier per unit mismatch in "US could play by the end of hour 1"
     "ev_bw": 0.0,           # kernel bandwidth on log(evening-before / h1) (0 = off)
     "ev_slope": 0.5,        # shrunk regression slope of y_h on log(ev) (0 = off)
     "loc": "blend",         # "wmean" | "wmedian" | "blend"
@@ -81,6 +82,35 @@ def meta_from_text(text):
     return {"rolling": rolling, "simul": simul, "unverified": unverified}
 
 
+ISO_RE = None
+
+
+def us_open_at_h1(text, tier, d0):
+    """1 if the big (US) audience could already play by the end of hour 1, 0 if not, 0.5 unknown.
+
+    Early access means players were in for days; a PC/global unlock time written in the notes at or before
+    day_start + 1 h means US PC players were in. A rolling midnight-local console launch keeps the US (unlock
+    04:00-08:00Z) locked through hour 1, as GTA VI does.
+    """
+    import re
+    t = text or ""
+    if tier.startswith("early-access"):
+        return 1.0
+    times = []
+    for m in re.finditer(r"(\d{4}-\d{2}-\d{2})T(\d{2}):(\d{2})(?::\d{2})?Z", t):
+        try:
+            times.append(parse_t(m.group(1) + "T" + m.group(2) + ":" + m.group(3) + ":00Z"))
+        except ValueError:
+            pass
+    tl = t.lower()
+    nz_only = [x for x in times if not (x < d0 - timedelta(hours=6))]  # NZ/Asia firsts are not the US
+    if ("simultaneous" in tl or "global" in tl or "pc" in tl) and nz_only:
+        return 1.0 if min(nz_only) <= d0 + timedelta(hours=1) else 0.0
+    if "midnight local" in tl or "rolling" in tl:
+        return 0.0
+    return 0.5
+
+
 def comparable_record(cm):
     d0 = parse_t(cm["day_start"])
     m = by_hour(cm.get("hourly") or [])
@@ -101,7 +131,10 @@ def comparable_record(cm):
         tier = unlock.split("Tier:")[1].strip().split(".")[0].strip().lower()
     plat = (cm.get("platforms") or "").lower()
     meta = meta_from_text(unlock.split("Tier:")[0])
-    meta.update({"tier": tier, "pc": "pc" in plat, "f2p": "free-to-play" in plat})
+    meta.update({"tier": tier, "pc": "pc" in plat, "f2p": "free-to-play" in plat,
+                 "us_open": us_open_at_h1(unlock.split("Tier:")[0], tier, d0)})
+    if meta["us_open"] == 0.5 and not meta["pc"]:
+        meta["us_open"] = 0.0  # console only: the US unlocks at its own midnight (04:00Z or later)
     return {"name": cm.get("name"), "h1": h1, "y": y, "ev": evening_ratio(vals, d0, h1), "meta": meta}
 
 
@@ -139,15 +172,20 @@ def wquantile(pairs, q):
 def forecast(target, pool, p=PARAMS):
     """target: {"h1", "ev"}; pool: comparable records. Returns {h: [5 quantiles of log ratio]}."""
     lh1 = math.log(max(1.0, target["h1"]))
+    t_open = target.get("us_open", 0.0)
+
+    def wave(r):
+        return p["wave_w"] ** abs(r["meta"].get("us_open", 0.5) - t_open)
+
     k = int(p.get("size_cap_rank", 0))
     if k > 0:
-        tops = sorted((r["h1"] for r in pool if base_weight(r, p) > 0), reverse=True)
+        tops = sorted((r["h1"] for r in pool if base_weight(r, p) * wave(r) >= 0.3), reverse=True)
         if len(tops) >= k:
             lh1 = min(lh1, math.log(tops[k - 1]))
     lev = math.log(target["ev"]) if target.get("ev") else None
     ws = []
     for r in pool:
-        w = base_weight(r, p)
+        w = base_weight(r, p) * wave(r)
         if w <= 0:
             continue
         if p["size_bw"] > 0:

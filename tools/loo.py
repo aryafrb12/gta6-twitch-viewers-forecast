@@ -26,7 +26,7 @@ def run(recs, p, verbose=False):
     rows = []
     for j, t in enumerate(recs):
         pool = [r for i, r in enumerate(recs) if i != j]
-        f = model.forecast({"h1": t["h1"], "ev": t["ev"]}, pool, p)
+        f = model.forecast({"h1": t["h1"], "ev": t["ev"], "us_open": t["meta"]["us_open"]}, pool, p)
         L = B = C = n = 0
         ae = 0
         for h, y in t["y"].items():
